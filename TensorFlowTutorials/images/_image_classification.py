@@ -244,69 +244,105 @@ train_data_gen = image_gen.flow_from_directory(
 augmented_images = [train_data_gen[0][0][0] for i in range(5)]
 plotImages(augmented_images)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+#使用所有的数据增强的方法
+image_gen_train = ImageDataGenerator(
+                    rescale=1./255, 
+                    rotation_range=45, 
+                    width_shift_range=.15, 
+                    height_shift_range=.15, 
+                    horizontal_flip=True, 
+                    zoom_range=0.5
+                    )
+
+
+train_data_gen = image_gen_train.flow_from_directory(
+                                                batch_size=batch_size, 
+                                                directory=train_dir, 
+                                                shuffle=True, 
+                                                target_size=(IMG_SHAPE,IMG_SHAPE),
+                                                class_mode='binary'
+                                                )
+
+augmented_images = [train_data_gen[0][0][0] for i in range(5)]
+plotImages(augmented_images)
+
+#创建验证集生成器
+#通常，我们只对训练示例应用数据增强。因此，在本例中，我们只对验证图像进行缩放，并使用ImageDataGenerator将它们转换为批处理。
+image_gen_val = ImageDataGenerator(rescale=1./255)
+val_data_gen = image_gen_val.flow_from_directory(batch_size=batch_size, 
+                                                 directory=validation_dir, 
+                                                 target_size=(IMG_SHAPE, IMG_SHAPE),
+                                                 class_mode='binary')
+
+#Dropout
+'''
+我们可以用来减少过拟合的另一种技术是在我们的网络中引入一种叫做dropout的东西。
+如果您不熟悉正则化这个术语，那么它仅仅意味着强制您的网络中的权重只取较小的值，
+这使得权重值的分布更加规则，并且网络可以减少对小的训练示例的过拟合。dropout是我
+们在本教程中使用的正则化技术之一。
+
+我们对一个层应用dropout时，它会在训练过程中随机地从应用层中退出(设置为零)输出单元的数量。
+dropout以分数作为输入值，其形式有0.1、0.2、0.4等，即从应用层随机抽取10%、20%或40%的输出单元。
+
+当我们将0.1值作为dropout值应用到某一层时，它会在每个训练元中随机杀死10%的输出单元。
+让我们用这个新的dropout特性创建一个网络架构，并将其应用于不同的卷积和完全连接的层。
+'''
+
+#使用dropout创新新的网络
+model = Sequential()
+model.add(Conv2D(16, 3, padding='same', activation='relu', input_shape=(150,150,3,))) 
+model.add(MaxPooling2D(pool_size=2))
+model.add(Dropout(0.3))
+model.add(Conv2D(32, 3, padding='same', activation='relu'))
+model.add(MaxPooling2D(pool_size=2))
+
+model.add(Conv2D(64, 3, padding='same', activation='relu'))
+model.add(MaxPooling2D(pool_size=2))
+
+model.add(Dropout(0.3))
+model.add(Flatten())
+model.add(Dense(512, activation='relu'))
+model.add(Dropout(0.1))
+model.add(Dense(1, activation='sigmoid'))
+
+#编译模型
+
+
+model.compile(optimizer='adam', 
+              loss='binary_crossentropy', 
+              metrics=['accuracy']
+             )
+
+model.summary()
+
+#训练模型
+history = model.fit_generator(
+    train_data_gen,
+    steps_per_epoch=int(np.ceil(total_train / float(batch_size))),
+    epochs=epochs,
+    validation_data=val_data_gen,
+    validation_steps=int(np.ceil(total_val / float(batch_size)))
+)
+
+#可视化训练结果
+acc = history.history['acc']
+val_acc = history.history['val_acc']
+
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+epochs_range = range(epochs)
+
+plt.figure(figsize=(8, 8))
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.show()
