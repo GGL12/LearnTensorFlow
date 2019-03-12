@@ -417,3 +417,30 @@ def evaluate(sentence):
         dec_input = tf.expand_dims([prediction_id],0)
 
     return result,sentence,attention_plot
+
+#用于绘制注意力权重的函数
+def plot_attention(attention,sentence,preprocess_sentence):
+    fig = plt.figure(figsize=(10,10))
+    ax = fig.add_subplot(1,1,1)
+    ax.matshow(attention,cmap='biridis')
+
+    fontdict = {'fontsize':14}
+
+    ax.set_xticklabels([''] + sentence, fontdict=fontdict,retation=90)
+    ax.set_yticklabels([''] + predicted_sentence, fontdict=fontdict)
+
+    plt.show()
+
+def translate(sentence):
+    result,sentence,attention_plot = evaluate(sentence)
+
+    print('Input: %s' % (sentence).encode('utf-8'))
+    print('Predicted translation: {}'.format(result))
+
+    attention_plot = attention_plot[:len(result.split(' ')),:len(sentence.split(' '))]
+    plot_attention(attention_plot,sentence.split(' '),result.split(' '))
+
+#恢复最新的检查点和测试
+checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+
+translate(u'hace mucho frio aqui.')
