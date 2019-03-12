@@ -245,3 +245,175 @@ class BahdanauAttention(tf.python.keras.Model):
 attention_layer = BahdanauAttention(10)
 attention_result, attention_weights = attention_layer(
     sample_hidden, sample_output)
+
+print("Attention result shape: (batch size, units) {}".format(attention_result.shape))
+print("Attention weights shape: (batch_size, sequence_length, 1) {}".format(attention_weights.shape))
+
+class Decoder(tf.python.layers.Model):
+    def __init__(self,vocab_size,embedding_dim,dec_units,batch_sz):
+        super(Decoder,self).__init__()
+        self.batch_sz = batch_sz
+        self.dec_units = dec_units
+        self.embedding = tf.python.layers.Embedding(vocab_size,embedding_dim)
+        self.gru = tf.python.layers.GRU(
+            self.dec_units,
+            return_sequences=True,
+            return_state=True,
+            recurrent_initializer="glorot_uniform"
+        )
+        self.fc = tf.python.keras.layers.Dense(vocab_size)
+
+        #使用注意力机制
+        self.attention = BahdanauAttention(self.dec_units)
+
+    def call(self,x,hidden,enc_output):
+        # enc_output shape == (batch_size, max_length, hidden_size)
+        context_vector,attention_weights = self.attention(hidden,enc_output)
+        #通过嵌入后的x形状== (batch_size, 1, embedding_dim)
+        x = self.embedding(x)
+        #连接后的x形状== (batch_size, 1, embedding_dim + hidden_size)
+        x = tf.concat([tf.expand_dims(context_vector,1),x],axis=-1)
+
+        #将连接后的向量传递给GRU
+        output,state = self.gru(x)
+
+        # output shape == (batch_size * 1, hidden_size)
+        output = tf.reshape(output,(-1,output.shape[2]))
+
+        # output shape == (batch_size, vocab)
+        x = self.fc(output)
+
+        return x,state,attention_weights
+
+decode = Decoder(vocab_tar_size,embedding_dim,units,BTACH_SIZE)
+sample_decoder_output,_,_ = decode(tf.random.uniform((64,1)),sample_hidden,sample_output)
+
+print ('Decoder output shape: (batch_size, vocab size) {}'.format(sample_decoder_output.shape))
+
+#定义优化器和损失函数
+optimizer = tf.python.keras.optimizers.Adam()
+loss_object = tf.python.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+def loss_function(real,pred):
+    mask = tf.math.logical_not(tf.math.equal(real,0))
+    loss_ = loss_object(real,pred)
+    mask = tf.cast(mask,dtype=loss_.dtype)
+    loss_ *= mask
+
+    return tf.reduce_mean(loss_)
+
+#设置检查点
+checkpoint_dir = './training_checkpoints'
+checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+checkpoint = tf.train.Checkpoint(optimizer=optimizer,
+                                 encoder=encoder,
+                                 decoder=decoder)
+
+#训练
+'''
+    1:通过编码器传递输入，编码器返回编码器输出和编码器隐藏状态。
+    2:将编码器输出、编码器隐藏状态和解码器输入(即开始令牌)传递给解码器。
+    3:解码器返回预测和解码器隐藏状态
+    4:然后将解码器的隐藏状态传递回模型，利用预测结果计算损耗。
+    5:使用教师强制决定下一个输入到解码器。
+    6:教师强迫是将目标单词作为下一个输入传递给解码器的技术。
+    7:最后一步是计算梯度，并将其应用于优化器和反向传播。
+'''
+def trian_step(inp,targ,enc_hidden):
+    loss = 0
+    with tf.GradientTape() as tape:
+        enc_output,enc_hidden = encoder(inp,enc_hidden)
+
+        dec_hidden = enc_hidden
+        
+        dec_input = tf.expand_dims([targ_lang.word_index['<start>']] * BTACH_SIZE,1)
+
+        for t in range(1,targ.shape[1]):
+            #将enc_output传递给解码器
+            predictions,dec_hidden,_ = decode(dec_input,dec_hidden,enc_output)
+
+            loss += loss_function(targ[:,t],predictions)
+
+            dec_input = tf.expand_dims(targ[:,t],1)
+
+    batch_loss = (loss / int(targ.shape[1]))
+
+    variables = encoder.trainable_variables + decode.trainable_variables
+
+    gradients = tape.gradient(loss,variables)
+
+    optimizer.apply_gradients(zip(gradients,variables))
+
+    return batch_loss
+
+EPOCHS = 10
+for epoch in range(EPOCHS):
+    start = time.time()
+    
+    enc_hidden = encoder.initialize_hidden_state()
+    total_loss = 0
+
+    for (batch,(inp,targ)) in enumerate(dataset.take(steps_per_epoch)):
+        batch_loss = trian_step(inp,targ,enc_hidden)
+        total_loss += batch_loss
+
+        if batch % 100 == 0:
+            print('Epoch {} Batch {} Loss {:.4f}'.format(epoch + 1,
+                                    batch,
+                                    batch_loss.numpy()))
+    if (epoch + 1) % 2 == 0:
+        checkpoint.save(file_prefix = checkpoint_prefix)
+    print('Epoch {} Loss {:.4f}'.format(epoch + 1,
+                                      total_loss / steps_per_epoch))
+    print('Time taken for 1 epoch {} sec\n'.format(time.time() - start))  
+
+#翻译
+'''
+    评估函数类似于训练循环，只是我们这里没有使用教师强制
+    解码器在每个时间步长的输入是其先前的预测，以及隐藏状态和编码器的输出。
+    当模型预测结束令牌时停止预测。并为每一步都储存注意力。
+    对于一个输入，编码器的输出只计算一次。
+'''
+
+def evaluate(sentence):
+    attention_plot = np.zeros((max_length_targ,max_length_inp))
+
+    sentence = preprocess_sentence(sentence)
+    inputs = [inp_lang.word_index[i] for i in sentence.split(' ')]
+    inputs = tf.python.keras.preprocessing.sequence.pad_sequences(
+        [inputs],
+        maxlen=max_length_inp,
+        paddint='post'
+    )
+
+    inputs = tf.convert_to_tensor(inputs)
+
+    result = ''
+
+    hidden = [tf.zeros((1,units))]
+    enc_out,enc_hidden = encoder(inputs,hidden)
+
+    dec_hidden = enc_hidden
+    dec_input = tf.expand_dims([targ_lang.word_index['<start>']],0)
+
+    for t in range(max_length_targ):
+        predictions,dec_hidden,attention_weights = decode(
+            dec_input,
+            dec_hidden,
+            enc_out
+        )
+
+        #把注意力集中在稍后的情节上
+        attention_weights = tf.reshape(predictions[0]).numpy()
+        attention_plot[t] = attention_weights.numpy()
+
+        prediction_id = tf.argmax(predictions[0]).numpy()
+
+        result += targ_lang.index_word[prediction_id] + ' '
+
+        if targ_lang.index_word[prediction_id] == '<end>':
+            return result,sentence,attention_plot
+        #预测的ID被反馈回模型
+        dec_input = tf.expand_dims([prediction_id],0)
+
+    return result,sentence,attention_plot
