@@ -3,27 +3,28 @@
 据集中训练一个简单的CNN模型。fashion MNIST数据集包含60000张尺寸为28×28的训练图像和10000张尺寸为28×28的测试图像。
     我们使用定制的训练循环来训练我们的模型，因为它们给了我们灵活性和对训练更大的控制。此外，它更容易调试模型和训练循环。
 '''
-from __future__ import absolute_import,division,print_function
+from __future__ import absolute_import, division, print_function
 
-import tensorflow as tf 
-import numpy as np 
+import tensorflow as tf
+import numpy as np
 import os
 
-#下载数据
+# 下载数据
 fashion_mnist = tf.keras.datasets.fashion_mnist
-(train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
-#数组添加维度——> new shape == (28,28,1)我们这样做是因为我们模型的第一层是卷积的
-#它需要4D输入(batch_size, height, width, channels)。
+(train_images, train_labels), (test_images,
+                               test_labels) = fashion_mnist.load_data()
+# 数组添加维度——> new shape == (28,28,1)我们这样做是因为我们模型的第一层是卷积的
+# 它需要4D输入(batch_size, height, width, channels)。
 # batch_size维度将在稍后添加。
 
-train_images = train_images[...,None]
-test_images = test_images[...,None]
+train_images = train_images[..., None]
+test_images = test_images[..., None]
 
-#0 1 初始化
+# 0 1 初始化
 train_images = train_images / np.float32(255)
 test_images = test_images / np.float32(255)
 
-#创建一个分配变量和图表的策略
+# 创建一个分配变量和图表的策略
 '''
 1:所有的变量和模型图都被复制到副本上。
 2:输入均匀地分布在各个副本上。
@@ -31,12 +32,12 @@ test_images = test_images / np.float32(255)
 4:梯度通过对所有副本求和来同步。
 5:同步之后，对每个副本上的变量副本进行相同的更新。
 '''
-#方法中未指定设备,在tf.distribute.MirroredStrategy，它将被自动检测到。
+# 方法中未指定设备,在tf.distribute.MirroredStrategy，它将被自动检测到。
 strategy = tf.distribute.MirroredStrategy()
 
-print ('Number of devices: {}'.format(strategy.num_replicas_in_sync))
+print('Number of devices: {}'.format(strategy.num_replicas_in_sync))
 
-#设置输入管道
+# 设置输入管道
 '''
 如果一个模型是在多个gpu上训练的，那么就应该相应地增加批处理大小，以便有效地利用额外的计算能力。此外，学习速度应该相应地调整。
 '''
@@ -52,30 +53,33 @@ test_steps_per_epoch = len(test_images) // BATCH_SIZE
 
 with strategy.scope():
     train_iterator = strategy.experimental_make_numpy_iterator(
-        (train_images,train_labels),BATCH_SIZE,shuffle=BUFFER_SIZE
+        (train_images, train_labels), BATCH_SIZE, shuffle=BUFFER_SIZE
     )
     test_iterator = strategy.experimental_make_numpy_iterator(
-        (test_images,test_labels),BATCH_SIZE,shuffle=BUFFER_SIZE
+        (test_images, test_labels), BATCH_SIZE, shuffle=BUFFER_SIZE
     )
 
-#创建模型
+# 创建模型
+
+
 def create_model():
     model = tf.keras.Sequential([
-      tf.keras.layers.Conv2D(32, 3, activation='relu'),
-      tf.keras.layers.MaxPooling2D(),
-      tf.keras.layers.Conv2D(64, 3, activation='relu'),
-      tf.keras.layers.MaxPooling2D(),
-      tf.keras.layers.Flatten(),
-      tf.keras.layers.Dense(64, activation='relu'),
-      tf.keras.layers.Dense(10, activation='softmax')
+        tf.keras.layers.Conv2D(32, 3, activation='relu'),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Conv2D(64, 3, activation='relu'),
+        tf.keras.layers.MaxPooling2D(),
+        tf.keras.layers.Flatten(),
+        tf.keras.layers.Dense(64, activation='relu'),
+        tf.keras.layers.Dense(10, activation='softmax')
     ])
     return model
 
-#创建检查点目录来存储检查点。
+
+# 创建检查点目录来存储检查点。
 checkpoint_dir = './training_checkpoints'
 checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 
-#定义损失函数
+# 定义损失函数
 '''
     通常，在一台拥有1个GPU/CPU的机器上，损失除以批量输入的示例数。
 那么，当使用tf.distribute.Strategy时，如何计算损失呢?
@@ -90,7 +94,7 @@ checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
 with strategy.scope():
     loss_object = tf.keras.losses.SparseCategoricalCrossentropy()
 
-#定义度量来跟踪损失和准确性
+# 定义度量来跟踪损失和准确性
 '''
 这些指标跟踪损失和准确性。您可以使用.result()在任何时候获取累积的统计信息。
 '''
@@ -98,39 +102,106 @@ with strategy.scope():
     train_loss = tf.keras.metrics.Mean(name='train_loss')
     test_loss = tf.keras.metrics.Mean(name='test_loss')
 
-    train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(name='train_accuracy')
-    test_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(name='test_accuracy')
+    train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
+        name='train_accuracy')
+    test_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
+        name='test_accuracy')
 
-#训练
+# 训练
 
-#模型和优化器必须在“strategy.scope”下创建。
+# 模型和优化器必须在“strategy.scope”下创建。
 with strategy.scope():
     model = create_model()
 
     optimizer = tf.keras.optimizer.Adam()
-    checkpoint = tf.train.Checkpoint(optimizer=optimizer,model=model)
+    checkpoint = tf.train.Checkpoint(optimizer=optimizer, model=model)
 
 with strategy.scope():
-    #训练
+    # 训练
     def train_step(inputs):
-        images,labels = input
+        images, labels = input
 
         with tf.GradientTape() as tape:
-            predictions = model(images,training=True)
-            loss = loss_object(labels,predictions)
+            predictions = model(images, training=True)
+            loss = loss_object(labels, predictions)
 
-        gradients = tape.gradient(loss,model.trainable_variables)
-        optimizer.apply_gradient(zip(gradients,model.trainable_variables))
+        gradients = tape.gradient(loss, model.trainable_variables)
+        optimizer.apply_gradient(zip(gradients, model.trainable_variables))
 
         train_loss(loss)
-        train_accuracy(labels,predictions)
+        train_accuracy(labels, predictions)
 
-    #测试
+    # 测试
     def test_step(inputs):
-        images ,labels = inputs
+        images, labels = inputs
 
-        predictions = model(images,training=False)
-        t_loss = loss_object(labels,predictions)
+        predictions = model(images, training=False)
+        t_loss = loss_object(labels, predictions)
 
         test_loss(t_loss)
-        test_accuracy(labels,predictions)
+        test_accuracy(labels, predictions)
+
+with strategy.scope():
+    # experimental ental_run '复制提供的计算并运行它使用分布式输入。
+
+    def distributed_train():
+        return strategy.experimental_run(train_step, train_iterator)
+
+    def distributed_test():
+        return strategy.experimental_run(test_step, test_iterator)
+
+    for epoch in range(EPOCHS):
+        # 这段代码预计在不久的将来会改变。
+
+        # 初始化迭代器 训练数据
+        train_iterator.initialize()
+        for _ in range(train_steps_per_epoch):
+            distributed_train()
+
+        # 测试数据
+        test_iterator.initialize()
+        for _ in range(test_steps_per_epoch):
+            distributed_test()
+
+        if epoch % 2 == 0:
+            checkpoint.save(checkpoint_dir)
+
+        template = ("Epoch {}, Loss: {}, Accuracy: {}, Test Loss: {}, "
+                    "Test Accuracy: {}")
+
+        print(template.format(epoch+1, train_loss.result(),
+                              train_accuracy.result()*100, test_loss.result(),
+                              test_accuracy.result()*100))
+
+        train_loss.reset_states()
+        test_loss.reset_states()
+        train_accuracy.reset_states()
+        test_accuracy.reset_states()
+
+# 恢复最新的检查点和测试
+'''
+一个带有tf. distribution的模型检查点。策略可以在有策略或没有策略的情况下恢复。
+'''
+eval_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(
+    name='eval_accuracy')
+
+new_model = create_model()
+new_optimizer = tf.keras.optimizer.Adam()
+
+test_dataset = tf.data.Dataset.from_tensor_slices(
+    (test_images, test_labels)).batch(BATCH_SIZE)
+
+
+def eval_step(images, labels):
+    predictions = new_model(images, training=False)
+    eval_accuracy(labels, predictions)
+
+
+checkpoint = tf.train.Checkpoint(optimizer=new_optimizer, model=new_model)
+checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+
+for images, labels in test_dataset:
+    eval_step(images, labels)
+
+print('Accuracy after restoring the saved model without strategy: {}'.format(
+    eval_accuracy.result()*100))
