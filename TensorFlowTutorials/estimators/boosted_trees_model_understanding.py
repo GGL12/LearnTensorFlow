@@ -237,3 +237,141 @@ def dist_violin_plot(df_dfc, ID):
 dist_violin_plot(df_dfc, ID)
 plt.title('Feature contributions for example {}\n pred: {:1.2f}; label: {}'.format(
     ID, probs[ID], labels[ID]))
+
+#全局特征重要性
+'''
+此外，您可能希望从整体上理解模型，而不是研究单个预测。下面，您将计算并使用:
+    1:使用est.experimental ental_feature_importances实现基于增益的特性导入
+    2:排列重要性
+    3:使用est.experimental ental_predict_with_explanation聚合dfc
+
+    基于收益的特征重要性度量的是对特定特征进行分割时的损失变化，而排列特征重要性的计算则是通过
+对评价集上的模型性能进行评估来计算的，方法是对每个特征逐一进行洗牌，并将模型性能的变化归因于洗牌后的特征。  
+    般来说，排列特征重要性优于基于收益的特征重要性，尽管在潜在预测变量的测量规模或类别数量不同以及特征相关(源)的情况下，这两种方法都可能不可靠
+'''
+#1. Gain-based特性重要性
+importances = est.experimental_feature_importances(normalize=True)
+df_imp = pd.Series(importances)
+
+#可视化重要性。
+N = 8
+ax = (df_imp.iloc[0:N][::-1].plot(kind='barh',
+          color=sns_colors[0],
+          title='Gain feature importances',
+          figsize=(10, 6)))
+ax.grid(False, axis='y')
+
+#DFCs平均绝对值
+dfc_mean = df_dfc.abs().mean()
+N = 8
+sorted_ix = dfc_mean.abs().sort_values()[-N:].index  # Average and sort by absolute.
+ax = dfc_mean[sorted_ix].plot(kind='barh',
+                       color=sns_colors[1],
+                       title='Mean |directional feature contributions|',
+                       figsize=(10, 6))
+ax.grid(False, axis='y')
+
+FEATURE = 'fare'
+feature = pd.Series(df_dfc[FEATURE].values, index=dfeval[FEATURE].values).sort_index()
+ax = sns.regplot(feature.index.values, feature.values, lowess=True);
+ax.set_ylabel('contribution')
+ax.set_xlabel(FEATURE);
+ax.set_xlim(0, 100);
+
+#3.排列特性重要性
+def permutation_importances(est, X_eval, y_eval, metric, features):
+    """逐列洗牌值，观察对eval集的影响。.
+    source: http://explained.ai/rf-importance/index.html
+    """
+    baseline = metric(est, X_eval, y_eval)
+    imp = []
+    for col in features:
+        save = X_eval[col].copy()
+        X_eval[col] = np.random.permutation(X_eval[col])
+        m = metric(est, X_eval, y_eval)
+        X_eval[col] = save
+        imp.append(baseline - m)
+    return np.array(imp)
+
+def accuracy_metric(est, X, y):
+    """TensorFlow estimator accuracy."""
+    eval_input_fn = make_input_fn(X,
+                                  y=y,
+                                  shuffle=False,
+                                  n_epochs=1)
+    return est.evaluate(input_fn=eval_input_fn)['accuracy']
+features = CATEGORICAL_COLUMNS + NUMERIC_COLUMNS
+importances = permutation_importances(est, dfeval, y_eval, accuracy_metric,
+                                      features)
+df_imp = pd.Series(importances, index=features)
+
+sorted_ix = df_imp.abs().sort_values().index
+ax = df_imp[sorted_ix][-5:].plot(kind='barh', color=sns_colors[2], figsize=(10, 6))
+ax.grid(False, axis='y')
+ax.set_title('Permutation feature importance');
+
+#可视化模型拟合
+from numpy.random import uniform, seed
+from matplotlib.mlab import griddata
+
+#创建假的数据
+seed(0)
+npts = 5000
+x = uniform(-2, 2, npts)
+y = uniform(-2, 2, npts)
+z = x*np.exp(-x**2 - y**2)
+
+#训练准备数据
+df = pd.DataFrame({'x': x, 'y': y, 'z': z})
+
+xi = np.linspace(-2.0, 2.0, 200),
+yi = np.linspace(-2.1, 2.1, 210),
+xi,yi = np.meshgrid(xi, yi);
+
+df_predict = pd.DataFrame({
+    'x' : xi.flatten(),
+    'y' : yi.flatten(),
+})
+predict_shape = xi.shape
+
+def plot_contour(x, y, z, **kwargs):
+    #网格数据。
+    plt.figure(figsize=(10, 8))
+    #对网格数据进行等高线，在非均匀数据点上绘制点。
+    CS = plt.contour(x, y, z, 15, linewidths=0.5, colors='k')
+    CS = plt.contourf(x, y, z, 15,
+                    vmax=abs(zi).max(), vmin=-abs(zi).max(), cmap='RdBu_r')
+    plt.colorbar()
+    plt.xlim(-2, 2)
+    plt.ylim(-2, 2)
+
+#你可以把这个函数形象化。较红的颜色对应较大的函数值。
+zi = griddata(x, y, z, xi, yi, interp='linear')
+plot_contour(xi, yi, zi)
+plt.scatter(df.x, df.y, marker='.')
+plt.title('Contour on training data');
+
+fc = [tf.feature_column.numeric_column('x'),
+      tf.feature_column.numeric_column('y')]
+
+def predict(est):
+    """来自给定estimator的预测"""
+    predict_input_fn = lambda: tf.data.Dataset.from_tensors(dict(df_predict))
+    preds = np.array([p['predictions'][0] for p in est.predict(predict_input_fn)])
+    return preds.reshape(predict_shape)
+
+#首先，让我们尝试将线性模型与数据相匹配。
+train_input_fn = make_input_fn(df, df.z)
+est = tf.estimator.LinearRegressor(fc)
+est.train(train_input_fn, max_steps=500);
+
+plot_contour(xi, yi, predict(est))
+
+#不太合适。接下来，让我们试着将一个GBDT模型拟合到它上面，并试着理解这个模型是如何拟合函数的。
+n_trees = 1 #@param {type: "slider", min: 1, max: 80, step: 1}
+
+est = tf.estimator.BoostedTreesRegressor(fc, n_batches_per_layer=1, n_trees=n_trees)
+est.train(train_input_fn, max_steps=500)
+clear_output()
+plot_contour(xi, yi, predict(est))
+plt.text(-1.8, 2.1, '# trees: {}'.format(n_trees), color='w', backgroundcolor='black', size=20);
