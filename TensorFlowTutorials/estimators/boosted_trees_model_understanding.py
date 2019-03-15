@@ -119,3 +119,121 @@ labels = y_eval.values
 probs = pd.Series([pred['probabilities'][1] for pred in pred_dicts])
 df_dfc = pd.DataFrame([pred['dfc'] for pred in pred_dicts])
 df_dfc.describe().T
+
+# DFCs的一个很好的性质是贡献的和加上偏差等于给定例子的预测。
+# Sum of DFCs + bias == probabality.
+bias = pred_dicts[0]['bias']
+dfc_prob = df_dfc.sum(axis=1) + bias
+np.testing.assert_almost_equal(dfc_prob.values,
+                               probs.values)
+
+# 为一名单独的乘客绘制DFCs图。让我们根据贡献的方向性对图进行颜色编码，并在图上添加特征值，从而使图更漂亮。
+
+
+def _get_color(value):
+    """使积极的DFCs地块绿色，消极的DFCs地块红色."""
+    green, red = sns.color_palette()[2:4]
+    if value >= 0:
+        return green
+    return red
+
+
+def _add_feature_values(feature_values, ax):
+    """在图的左侧显示feature的值"""
+    x_coord = ax.get_xlim()[0]
+    OFFSET = 0.15
+    for y_coord, (feat_name, feat_val) in enumerate(feature_values.items()):
+        t = plt.text(x_coord, y_coord - OFFSET, '{}'.format(feat_val), size=12)
+        t.set_bbox(dict(facecolor='white', alpha=0.5))
+    from matplotlib.font_manager import FontProperties
+    font = FontProperties()
+    font.set_weight('bold')
+    t = plt.text(x_coord, y_coord + 1 - OFFSET, 'feature\nvalue',
+                 fontproperties=font, size=12)
+
+
+def plot_example(example):
+    TOP_N = 8  # 查看最为相关的8个特征
+    # Sort by magnitude.
+    sorted_ix = example.abs().sort_values()[-TOP_N:].index
+    example = example[sorted_ix]
+    colors = example.map(_get_color).tolist()
+    ax = example.to_frame().plot(kind='barh',
+                                 color=[colors],
+                                 legend=None,
+                                 alpha=0.75,
+                                 figsize=(10, 6))
+    ax.grid(False, axis='y')
+    ax.set_yticklabels(ax.get_yticklabels(), size=14)
+
+    # 增加特征的值
+    _add_feature_values(dfeval.iloc[ID][sorted_ix], ax)
+    return ax
+
+
+# 绘制结果
+ID = 182
+example = df_dfc.iloc[ID]  # 从评估集中选择第i个例子。
+TOP_N = 8  # 查看最为相关的8个特征
+sorted_ix = example.abs().sort_values()[-TOP_N:].index
+ax = plot_example(example)
+ax.set_title('Feature contributions for example {}\n pred: {:1.2f}; label: {}'.format(
+    ID, probs[ID], labels[ID]))
+ax.set_xlabel('Contribution to predicted probability', size=14)
+
+'''
+    震级贡献越大，对模型预测的影响越大。负的贡献表明，该实例的特征值降低了模型的预测，而正的贡献增加了预测。
+    您还可以使用voilin将示例的dfc与整个分布进行比较。
+'''
+
+
+def dist_violin_plot(df_dfc, ID):
+    # 初始化绘画
+    fig, ax = plt.subplots(1, 1, figsize=(10, 6))
+
+    # 创建dataframe示例。
+    TOP_N = 8  # 查看最为相关的8个特征
+    example = df_dfc.iloc[ID]
+    ix = example.abs().sort_values()[-TOP_N:].index
+    example = example[ix]
+    example_df = example.to_frame(name='dfc')
+   # 添加整个发行版的贡献
+    parts = ax.violinplot([df_dfc[w] for w in ix],
+                          vert=False,
+                          showextrema=False,
+                          widths=0.7,
+                          positions=np.arange(len(ix)))
+    face_color = sns_colors[0]
+    alpha = 0.15
+    for pc in parts['bodies']:
+        pc.set_facecolor(face_color)
+        pc.set_alpha(alpha)
+
+    # 增加特征值
+    _add_feature_values(dfeval.iloc[ID][sorted_ix], ax)
+
+    # 添加本地贡献。
+    ax.scatter(example,
+               np.arange(example.shape[0]),
+               color=sns.color_palette()[2],
+               s=100,
+               marker="s",
+               label='contributions for example')
+
+    ax.plot([0, 0], [1, 1], label='eval set contributions\ndistributions',
+            color=face_color, alpha=alpha, linewidth=10)
+    legend = ax.legend(loc='lower right', shadow=True, fontsize='x-large',
+                       frameon=True)
+    legend.get_frame().set_facecolor('white')
+
+    # 格式化绘画
+    ax.set_yticks(np.arange(example.shape[0]))
+    ax.set_yticklabels(example.index)
+    ax.grid(False, axis='y')
+    ax.set_xlabel('Contribution to predicted probability', size=14)
+
+
+# 绘画
+dist_violin_plot(df_dfc, ID)
+plt.title('Feature contributions for example {}\n pred: {:1.2f}; label: {}'.format(
+    ID, probs[ID], labels[ID]))
