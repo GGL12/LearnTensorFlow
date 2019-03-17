@@ -188,3 +188,138 @@ ds = ds.batch(BATCH_SIZE)
 # prefetch”允许数据集在模型训练时在后台获取批数据。
 ds = ds.prefetch(buffer_size=AUTOTUNE)
 ds
+
+'''
+这里有几件事需要注意:
+    1:顺序很重要。
+        a.repeat之前的A.shuffle将会跨历历元边界对项进行洗牌(有些项将会在其他项被看到之前被看到两次)。
+        在.batch之后的.shuffle将会打乱批次的顺序，但是不会在批次之间打乱项目。
+    2:们使用与数据集大小相同的buffer_size进行完全的洗牌。对于数据集大小，较大的值提供更好的随机化，但使用更多的内存。
+    3:在从洗牌缓冲区中提取任何元素之前填充它。因此，当数据集启动时，较大的buffer_size可能会导致延迟。
+    4:改组后的数据集在改组缓冲区完全为空之前不会报告数据集的结束。数据集由.repeat重新启动，导致另一个等待shuffle-buffer被填充。
+
+最后一点可以通过使用tf.data.Dataset来解决。采用融合tf.数据的方法进行实验shuffle_and_repeat功能:
+'''
+ds = image_label_ds.apply(
+    tf.data.experimental.shuffle_add_repeat(buffer_size=image_count)
+)
+ds = ds.batch(BATCH_SIZE)
+ds = ds.prefetch(buffer_size=AUTOTUNE)
+ds
+
+#将数据集导入模型
+'''
+从tf.keras.applications获取MobileNet v2的副本。
+这将用于一个简单的迁移学习示例。
+将MobileNet权重设置为不可训练:
+'''
+mobile_net = tf.keras.applications.MobileNetV2(input_shape=(192,192,3),include_top=False)
+mobile_net.trainable=False
+
+#该模型期望其输入归一化为[-1,1]范围:
+'''
+help(keras_applications.mobilenet_v2.preprocess_input)
+这个函数应用“Inception”预处理，它将RGB值从[0,255]转换为[- 1,1]
+'''
+
+#因此，在将其传递到MobilNet模型之前，我们需要将输入范围从[0,1]转换为[-1,1]。
+def change_range(image,label):
+    return 2*image-1,label
+
+keras_ds = ds.map(change_range)
+
+#MobileNet为每个图像返回一个6x6的特征空间网格。给它传一组图片看看:
+
+#据集可能需要几秒钟启动，因为它填充了它的shuffle缓冲区。
+image_batch,label_batch = next(iter(keras_ds))
+
+feature_map_batch = mobile_net(image_batch)
+print(feature_map_batch.shape)
+
+'''
+因此，构建一个围绕MobileNet的模型，并使用tf.keras.layers。在输出tf.keras.layers之前，
+GlobalAveragePooling2D对这些空间维度进行平均致密层:
+'''
+model = tf.keras.Sequential([
+    mobile_net,
+    tf.keras.layers.GlobalAveragePooling2D(),
+    tf.keras.layers.Dense(len(label_names))
+])
+
+#现在它产生预期形状的输出:
+logit_batch = model(image_batch).numpy()
+
+print("min logit:",logit_batch.min())
+print("max logit:",logit_batch.max())
+print()
+
+print("shape:",logit_batch.barch)
+
+#编译模型
+model.compile(
+    optimizer=tf.train.losses.sparse_categorical_crossentropy,
+    loss=tf.keras.losses.sparse_categorical_crossentropy,
+    metrics=["accuracy"]
+)
+
+#有2个可训练变量:weights and bias:
+len(model.trainable_variables)
+model.summary()
+
+#训练模型。
+'''
+通常，您会指定每个epoch的实际步骤数，但是出于演示目的，只运行3个步骤。
+'''
+steps_per_epoch = tf.ceil(len(all_image_paths)/BATCH_SIZE).numpy()
+steps_per_epoch
+
+model.fit(ds,epochs=1,steps_per_epoch=3)
+
+#性能
+'''
+注意:本节只展示了一些可能有助于提高性能的简单技巧。
+上面使用的简单管道在每个历元上分别读取每个文件。这对于CPU上的本地训练是可以的，
+但是对于GPU的训练可能是不够的，对于任何类型的分布式训练都是完全不合适的。
+'''
+
+#要进行研究，首先构建一个简单的函数来检查我们的数据集的性能:
+import time
+def timeit(ds,batches=2*steps_per_epoch+1):
+    overall_start = time.time()
+    #取一个批次来启动管道(填充洗牌缓冲区)，
+    #开始计时前
+    it = iter(ds.take(batches+1))
+    next(it)
+
+    start = time.time()
+    for i,(image,label) in enumerate(it):
+        if i%10 == 0:
+            print(".",end="")
+    print()
+    end = time.time()
+
+    duration = end- start
+    print("{} batches: {} s".format(batches, duration))
+    print("{:0.5f} Images/s".format(BATCH_SIZE*batches/duration))
+    print("Total time: {}s".format(end-overall_start))
+        
+#当前数据集的性能为:
+ds = image_label_ds.apply(
+    tf.data.experimental.shuffle_add_repeat(buffer_size=image_count)
+)
+ds = ds.batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
+ds
+timeit(ds)
+
+#缓存
+'''
+使用tf.data.Dataset。缓存以方便跨时代缓存计算。如果dataq能够装入内存，这将特别具有性能。
+这里的图像缓存后，预先预制(解码和调整大小):
+'''
+ds = image_label_ds.cache()
+ds = ds.apply(
+    tf.data.experimental.shuffle_and_repeat(buffer_size=image_count)
+)
+ds = ds.batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
+ds
+timeit(ds)
