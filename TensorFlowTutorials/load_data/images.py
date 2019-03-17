@@ -323,3 +323,61 @@ ds = ds.apply(
 ds = ds.batch(BATCH_SIZE).prefetch(buffer_size=AUTOTUNE)
 ds
 timeit(ds)
+
+#TFRecord文件
+'''
+原始图像数据
+TFRecord文件是一种存储二进制块序列的简单格式。通过将多个示例打包到同一个文件中，TensorFlow能够同时读取多个示例，这对于使用诸如GCS之类的远程存储服务时的性能尤为重要。
+首先，从原始图像数据构建一个TFRecord文件:
+'''
+image_ds = tf.data.Dataset.from_tensor_slices(all_image_paths).map(tf.io.read_file)
+tfrec = tf.data.experimental.TFRecordWriter('images.tfrec')
+tfrec.write(image_ds)
+
+#接下来，构建一个数据集，它从TFRecord文件中读取数据，并使用前面定义的preprocess_image函数对图像进行解码/重新格式化。
+image_ds = tf.data.TFRecordDataset('images.tfrec').map(preprocess_image)
+
+#将其与我们前面定义的标签数据集一起压缩，以获得预期的(图像、标签)对。
+ds = tf.data.Dataset.zip((image_ds, label_ds))
+ds = ds.apply(
+  tf.data.experimental.shuffle_and_repeat(buffer_size=image_count))
+ds=ds.batch(BATCH_SIZE).prefetch(AUTOTUNE)
+ds
+#这比缓存版本慢，因为我们没有缓存预处理。
+timeit(ds)
+
+#序列化的张量
+'''
+为了将一些预处理保存到TFRecord文件中，首先将处理后的图像做成数据集，如下图所示:
+'''
+paths_ds = tf.data.Dataset.from_tensor_slices(all_image_paths)
+image_ds = paths_ds.map(load_and_preprocess_image)
+image_ds
+
+#现在不是.jpeg字符串的数据集，而是张量的数据集。要将其序列化为TFRecord文件，首先要将张量数据集转换为字符串数据集。
+
+ds = image_ds.map(tf.io.serialize_tensor)
+ds
+
+tfrec = tf.data.experimental.TFRecordWriter('images.tfrec')
+tfrec.write(ds)
+
+#通过缓存预处理，可以非常有效地从TFrecord文件加载数据。只要记住在使用它之前先去序列化张量。
+ds = tf.data.TFRecordDataset('images.tfrec')
+
+def parse(x):
+    result = tf.io.parse_tensor(x, out_type=tf.float32)
+    result = tf.reshape(result, [192, 192, 3])
+    return result
+
+ds = ds.map(parse, num_parallel_calls=AUTOTUNE)
+ds
+
+#现在，添加标签并应用与之前相同的标准操作:
+ds = tf.data.Dataset.zip((ds, label_ds))
+ds = ds.apply(
+  tf.data.experimental.shuffle_and_repeat(buffer_size=image_count))
+ds=ds.batch(BATCH_SIZE).prefetch(AUTOTUNE)
+ds
+
+timeit(ds)
