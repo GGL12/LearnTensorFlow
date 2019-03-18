@@ -165,3 +165,55 @@ tf.data模块还提供了在tensorflow中读写数据的工具。
     编写TFRecord文件
     将数据放入数据集中最简单的方法是使用from_tensor_sections方法。应用于数组，它返回一个标量数据集
 '''
+tf.data.Dataset.from_tensor_slices(feature1)
+
+# 应用于数组的元组，它返回一个元组数据集:
+features_dataset = tf.data.Dataset.from_tensor_slices(
+    (feature0, feature1, feature2, feature3))
+features_dataset
+
+# 使用“take(1)”只从数据集中提取一个示例。
+for f0, f1, f2, f3 in features_dataset.take(1):
+    print(f0)
+    print(f1)
+    print(f2)
+    print(f3)
+
+# 使用tf.data.Dataset。方法将函数应用于数据集的每个元素。
+'''
+映射函数必须在张量流图模式下操作:它必须操作并返回tf.张量。一个非张量函数，比如create_example，可以用tf封装。py_func使其兼容。
+'''
+
+
+def tf_serialize_example(f0, f1, f2, f3):
+    tf_string = tf.py_function(
+        serialize_example,
+        (f0, f1, f2, f3),  # 将这些参数传递给上面的函数。
+        tf.string  # 返回类型是' tf.string '。
+    )
+    return tf.reshape(tf_string, ())  # 结果是一个标量
+
+
+tf_serialize_example(f0, f1, f2, f3)
+
+# 将此函数应用于数据集中的每个元素:
+serialize_features_dataset = features_dataset.map(tf_serialize_example)
+serialize_features_dataset
+
+
+def generator():
+    for features in features_dataset:
+        yield serialize_example(*features)
+
+
+serialized_features_dataset = tf.data.Dataset.from_generator(
+    generator,
+    output_types=tf.string,
+    output_shapes=()
+)
+serialized_features_dataset
+
+# 并写入TFRecord文件:
+filename = 'test.tfrecord'
+writer = tf.data.experimental.TFRecordWriter(filename)
+writer.write(serialized_features_dataset)
