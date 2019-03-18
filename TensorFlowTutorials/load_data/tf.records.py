@@ -217,3 +217,171 @@ serialized_features_dataset
 filename = 'test.tfrecord'
 writer = tf.data.experimental.TFRecordWriter(filename)
 writer.write(serialized_features_dataset)
+
+# 读取TFRecord文件
+'''
+我们还可以使用tf.data读取TFRecord文件。TFRecordDataset类。
+有关使用tf使用TFRecord文件的更多信息。数据可以在这里找到。
+使用TFRecordDatasets对于标准化输入数据和优化性能非常有用。
+'''
+filenames = [filename]
+raw_dataset = tf.data.TFRecordDataset(filenames)
+raw_dataset
+
+'''
+此时，数据集包含序列化的tf.train。消息示例。当对其进行迭代时，将返回这些标量字符串张量。
+使用.take方法只显示前10条记录。
+注意:遍历tf.data。Dataset只在启用紧急执行时工作。
+'''
+for raw_record in raw_dataset.take(10):
+    print(repr(raw_record))
+
+'''
+可以使用下面的函数解析这些张量。
+注意:feature_description在这里是必要的，因为数据集使用图形执行，并且需要这个描述来构建它们的形状和类型签名。
+'''
+# 创建特性的描述。
+feature_description = {
+    'feature0': tf.io.FixedLenFeature([], tf.int64, default_value=0),
+    'feature1': tf.io.FixedLenFeature([], tf.int64, default_value=0),
+    'feature2': tf.io.FixedLenFeature([], tf.string, default_value=''),
+    'feature3': tf.io.FixedLenFeature([], tf.float32, default_value=0.0),
+}
+
+
+def _parse_function(example_proto):
+    # 使用字典解析输入tf.Example
+    return tf.io.parse_single_example(example_proto, feature_description)
+
+
+parsed_dataset = raw_dataset.map(_parse_function)
+
+'''
+使用快速执行来显示数据集中的观察结果。这个数据集中有10,000个观察值，但是我们只显示前
+10个。数据显示为特征字典。每个项目都是tf。张量，这个张量的numpy元素表示特征值。
+'''
+
+# python中的TFRecord文件
+'''
+特遣部队。io模块还包含用于读取和写入TFRecord文件的纯python函数。
+    编写TFRecord文件
+现在将10,000个观察结果写入test.tfrecords文件。每次观测都转换为tf。示例消息，
+然后写入文件。然后我们可以验证文件测试。已经创建了tfrecords。
+'''
+
+with tf.io.TFRecordWriter(filename) as writer:
+    for i in range(n_observations):
+        example = serialize_example(
+            feature0[i], feature1[i], feature2[i], feature3[i])
+        writer.write(example)
+
+'''
+读取TFRecord文件
+使用tf.train.Example.ParseFromString可以很容易地解析这些序列化的tensores
+'''
+filenames = [filename]
+raw_dataset = tf.data.TFRecordDataset(filenames)
+raw_dataset
+
+for raw_record in raw_dataset.take(1):
+    example = tf.train.Example()
+    example.ParseFromString(raw_record.numpy())
+    print(example)
+
+# 演练:读取/写入图像数据
+'''
+    这是一个如何使用TFRecords读写图像数据的示例。这样做的目的是显示如何端到端输入数据(在本例
+中是图像)并将数据写入TFRecord文件，然后读取文件并显示图像。
+例如，如果希望在同一个输入数据集上使用多个模型，这将非常有用。它可以被预处理成TFRecords
+格式，而不是存储原始的图像数据，并且可以用于所有进一步的处理和建模。
+'''
+# 获取的图像
+cat_in_snow = tf.keras.utils.get_file('320px-Felis_catus-cat_on_snow.jpg',
+                                      'https://storage.googleapis.com/download.tensorflow.org/example_images/320px-Felis_catus-cat_on_snow.jpg')
+williamsburg_bridge = tf.keras.utils.get_file('194px-New_East_River_Bridge_from_Brooklyn_det.4a09796u.jpg',
+                                              'https://storage.googleapis.com/download.tensorflow.org/example_images/194px-New_East_River_Bridge_from_Brooklyn_det.4a09796u.jpg')
+
+display.display(display.Image(filename=cat_in_snow))
+display.display(display.HTML(
+    'Image cc-by: <a "href=https://commons.wikimedia.org/wiki/File:Felis_catus-cat_on_snow.jpg">Von.grzanka</a>'))
+
+display.display(display.Image(filename=williamsburg_bridge))
+display.display(display.HTML(
+    '<a "href=https://commons.wikimedia.org/wiki/File:New_East_River_Bridge_from_Brooklyn_det.4a09796u.jpg">From Wikimedia</a>'))
+
+# 编写TFRecord文件]
+'''
+    正如我们之前所做的，我们现在可以将这些特性编码为与tf.Example兼容的类型。在本例中，
+我们不仅将原始图像字符串存储为一个特性，还将存储高度、宽度、深度和任意的标签特性，在编写文
+件时使用这些特性来区分cat图像和桥接图像。我们将对cat图像使用0，对bridge图像使用1。
+'''
+image_labels = {
+    cat_in_snow: 0,
+    williamsburg_bridge: 1,
+}
+image_string = open(cat_in_snow, 'rb').read()
+
+label = image_labels[cat_in_snow]
+
+# 这是一个例子，只使用猫的图像。
+
+
+def image_example(image_string, label):
+    image_shape = tf.image.decode_jpeg(image_string).shape
+
+    feature = {
+        'height': _int64_feature(image_shape[0]),
+        'width': _int64_feature(image_shape[1]),
+        'depth': _int64_feature(image_shape[2]),
+        'label': _int64_feature(label),
+        'image_raw': _bytes_feature(image_string),
+    }
+
+    return tf.train.Example(features=tf.train.Features(feature=feature))
+
+
+for line in str(image_example(image_string, label)).split('\n')[:15]:
+    print(line)
+print('...')
+
+'''
+将原始图像文件写入images.tfrecords。首先，将这两张图片处理成tf。消息示例。然后，写入.tfrecords文件。
+'''
+record_file = 'images.tfrecords'
+with tf.io.TFRecordWriter(record_file) as writer:
+    for filename, label in image_labels.items():
+        image_string = open(filename, 'rb').read()
+        tf_example = image_example(image_string, label)
+        writer.write(tf_example.SerializeToString())
+
+# 读取TFRecord文件
+'''
+    现在我们有了文件images.tfrecords。现在，我们可以遍历文件中的记录来读取我们所写的内容。
+因为，对于我们的用例，我们只复制图像，所以我们需要的唯一特性就是原始图像字符串。我们可以
+使用上面描述的getter方法来提取它，即example.features.feature['image_raw'].bytes_list.value[0]。
+我们还使用标签来确定哪条记录是猫而不是桥。
+'''
+raw_image_dataset = tf.data.TFRecordDataset('images.tfrecords')
+
+# 创建一个描述特性的字典。
+image_feature_description = {
+    'height': tf.io.FixedLenFeature([], tf.int64),
+    'width': tf.io.FixedLenFeature([], tf.int64),
+    'depth': tf.io.FixedLenFeature([], tf.int64),
+    'label': tf.io.FixedLenFeature([], tf.int64),
+    'image_raw': tf.io.FixedLenFeature([], tf.string),
+}
+
+
+def _parse_image_function(example_proto):
+  # 使用字典解析输入tfExample上面
+    return tf.io.parse_single_example(example_proto, image_feature_description)
+
+
+parsed_image_dataset = raw_image_dataset.map(_parse_image_function)
+parsed_image_dataset
+
+# 从TFRecord文件中恢复图像:
+for image_features in parsed_dataset:
+    image_raw = image_features['image_raw'].numpy()
+    display.display(display.Image(data=image_raw))
