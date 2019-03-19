@@ -147,3 +147,80 @@ for img, path in iamge_dataset:
 最后，我们创建一个单词——>索引映射，反之亦然。
 然后我们将所有序列填充为与最长序列相同的长度。
 '''
+# 这将找到数据集中任何标题的最大长度
+
+
+def calc_max_length(tensor):
+    return max(len(t) for t in tensor)
+
+
+# 上面的步骤是处理文本处理的一般过程
+# 从词汇表中选择前5000个单词
+top_k = 5000
+tokenizer = tf.keras.preprocessing.text.Tokenizer(
+    num_words=top_k,
+    oov_token='<unk>',
+    filters='!"#$%&()*+.,-/:;=?@[\]^_`{|}~ '
+)
+tokenizer.fit_on_texts(train_captions)
+train_seqs = tokenizer.texts_to_sequences(train_captions)
+
+tokenizer.word_index['<pad>'] = 0
+tokenizer.index_word[0] = '<pad>'
+
+# 创建标记向量
+train_seqs = tokenizer.texts_to_sequences(train_captions)
+
+# 将每个向量填充到标题的max_length如果没有提供max_length参数，那么pad_sequences会自动计算这个值
+cap_vector = tf.keras.preprocessing.sequence.pad_sequences(
+    train_seqs,
+    padding='post'
+)
+
+# 计算max_length
+# 用于存储注意力权重
+max_lenght = calc_max_length(train_seqs)
+
+# 将数据分解为训练和测试
+
+# 使用80-20分割创建培训和验证集、
+img_name_train, img_name_val, cap_train, cap_val = train_test_split(
+    img_name_vector,
+    cap_vector,
+    test_size=0.2,
+    random_state=0
+)
+len(img_name_train), len(cap_train), len(img_name_val), len(cap_val)
+
+# 我们的图片和说明已经准备好了!接下来，让我们创建一个tf.data用于训练模型
+
+'''
+根据您的系统配置随意更改这些参数
+'''
+BATCH_SIZE = 64
+BUFFER_SIZE = 1000
+embedding_dim = 256
+units = 512
+vocab_size = len(tokenizer.word_index) + 1
+num_steps = len(img_name_train) // BATCH_SIZE
+# 从InceptionV3中提取的向量的形状为(64,2048)这两个变量表示这个
+features_shape = 2048
+attention_features_shape = 64
+
+# 加载文件
+
+
+def map_func(img_name, cap):
+    ima_tensor = np.load(img_name.decode('utf-8')+'.npy')
+    return ima_tensor, cap
+
+
+dataset = tf.data.Dataset.from_tensor_slices((img_name_train, cap_train))
+# 使用map并行加载numpy文件
+dataset = dataset.map(lambda iterm1, iterm2: tf.numpy_function(
+    map_func, [iterm1, iterm2], [tf.float32, tf.int32]),
+    num_parallel_calls=tf.data.exprimental.AUTOTUNE
+)
+
+dataset = dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
+dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
