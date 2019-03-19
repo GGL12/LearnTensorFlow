@@ -88,5 +88,62 @@ def load_image(image_path):
     img = tf.io.read_file(image_path)
     img = tf.image.decode_jpeg(img, channels=3)
     img = tf.image.resize(img, (299, 299))
-    img = tf.keras.applications.inception_v3.preprocess_input(img)
+    img = tf.keras.applications.Inception_v3.preprocess_input(img)
     return img, image_path
+
+
+# 初始化InceptionV3并加载预训练的Imagenet权重
+'''
+    为此，我们将创建一个tf。keras模型，其中输出层是InceptionV3体系结构中的最后一个卷积层。
+每个图像都通过网络转发，最后得到的向量存储在字典中(image_name—> feature_vector)。
+我们使用最后一个卷积层因为我们在这个例子中使用了注意力。该层输出的形状为8x8x2048。
+我们在训练中避免这样做，这样就不会成为瓶颈。
+在所有图像通过网络之后，我们对字典进行pickle并将其保存到磁盘。
+'''
+image_model = tf.keras.applications.Inception_v3(
+    include_top=False,
+    weights='imagenet'
+)
+new_input = image_model.input
+hidden_layer = image_model.layers[-1].output
+
+iamge_features_extract_model = tf.keras.Model(
+    new_input,
+    hidden_layer
+)
+
+# 缓存从InceptionV3中提取的特性
+'''
+    我们将使用InceptionV3对每个图像进行预处理，并将输出缓存到磁盘。将输出缓存到RAM中会
+更快，但需要占用内存，每个映像需要8 * 8 * 2048个浮点数。在编写本文时，这将超过Colab的内存限制
+(尽管这些限制可能会发生变化，但是一个实例目前似乎有大约12GB的内存)。
+使用更复杂的缓存策略(例如，通过分片图像来减少随机访问磁盘I/O)可以提高性能，但代价是需要
+更多的代码。
+'''
+
+# 得到唯一的图像
+encode_train = sorted(set(img_name_vector))
+# 根据您的系统配置随意更改batch_size
+iamge_dataset = tf.data.Dataset.from_tensor_slices(encode_train)
+iamge_dataset = iamge_dataset.map(
+    load_image, num_parallel_calls=tf.data.experimental.AUTOTUNE.batch(16)
+)
+
+
+for img, path in iamge_dataset:
+    batch_features = iamge_features_extract_model(img)
+    batch_features = tf.reshape(
+        batch_features,
+        (batch_features.shape[0], -1, batch_features.shape[3])
+    )
+    for bf, p in zip(batch_features, path):
+        path_of_feature = p.numpy().decode("utf-8")
+        np.save(path_of_feature, bf.numpy())
+
+# 对标题进行预处理和标记
+'''
+首先，我们将标记标题(例如，通过分隔空格)。这将为我们提供数据中所有独特单词的词汇表(如“surfing”、“football”等)。
+接下来，我们将把词汇量限制在前5000个单词以内，以节省内存。我们将用标记“UNK”(表示未知)替换所有其他单词。
+最后，我们创建一个单词——>索引映射，反之亦然。
+然后我们将所有序列填充为与最长序列相同的长度。
+'''
