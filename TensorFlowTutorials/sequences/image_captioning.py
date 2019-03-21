@@ -400,3 +400,88 @@ def train_step(img_tensor,target):
     print ('Epoch {} Loss {:.6f}'.format(epoch + 1, 
                                          total_loss/num_steps))
     print ('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
+
+plt.plot(loss_plot)
+plt.xlabel('EPOCHS')
+plt.ylabel("Loss")
+plt.title("Loss Plot")
+plt.show()
+
+#加上说明
+'''
+1:评估函数类似于训练循环，只是我们这里没有使用教师强制。解码器在每个时间步长的输入是其先前的预测，以及隐藏状态和编码器的输出。
+2:当模型预测结束令牌时停止预测。
+3:并为每一步都储存注意力。
+'''
+def evalute(image):
+    attention_plot = np.zeros((max_lenght,attention_features_shape))
+
+    hidden = decoder.reset_state(batch_size=1)
+    
+    temp_input = tf.expand_dims(load_image(image)[0],0)
+    img_tensor_val = iamge_features_extract_model(temp_input)
+    img_tensor_val = tf.reshape(img_tensor_val,(img_tensor_val.shape[0],-1,img_tensor_val[3]))
+
+    features = encoder(img_tensor_val)
+
+    dec_input = tf.expand_dims([tokenizer.word_index['<start>']],0)
+    result = []
+
+    for i in range(max_lenght):
+        predictions,hidden,attention_weights = decoder(dec_input,features,hidden)
+
+        attention_plot[i] = tf.reshape(attention_weights,(-1,)).numpy()
+
+        predicted_id = tf.argmax(predictions[0]).numpy()
+        result.append(tokenizer.word_index[predicted_id])
+
+        if tokenizer.index_word[predicted_id] == '<end>':
+            return result,attention_plot
+        dec_input = tf.expand_dims([predicted_id],0)
+
+    attention_plot = attention_plot[:len(result),:]
+    return result,attention_plot
+
+def plot_attention(image,result,attention_plot):
+    temp_image = np.array(Image.open(image))
+
+    fig = plt.figure(figsize=(10,10))
+
+    len_result = len(result)
+    for i in range(len_result):
+        temp_att = np.resize(attention_plot[i],(8.8))
+        ax = fig.add_subplot(len_result//2,len_result//2,i+1)
+        ax.set_title(result[1])
+        img = ax.imshow(temp_image)
+        ax.imshow(temp_att,cmap='gray',alpha=0.6,extent=img.get_extent())
+    plt.tight_layout()
+    plt.show()
+
+#验证集上的标题
+rid = np.random.randint(0,len(img_name_val))
+image = img_name_val[rid]
+real_cation = ' '.join([tokenizer.index_word[i] for i in cap_val[rid] if i not in [0]])
+result,attention_plot = evalute(image)
+
+print ('Real Caption:', real_caption)
+print ('Prediction Caption:', ' '.join(result))
+plot_attention(image, result, attention_plot)
+#打开图像
+Image.open(img_name_val[rid])
+
+
+#在你自己的图片上试试
+'''
+有趣的是，下面我们提供了一个方法，您可以使用我们刚刚训练的模型为您自己的图像添加标题。
+请记住，它是基于相对较少的数据进行训练的，您的图像可能与训练数据不同(所以要准备好接受
+奇怪的结果!)
+'''
+image_url = 'https://tensorflow.org/images/surf.jpg'
+image_extension = image_url[-4:]
+image_path = tf.keras.utils.get_file('image'+image_extension, 
+                                     origin=image_url)
+
+result, attention_plot = evaluate(image_path)
+print ('Prediction Caption:', ' '.join(result))
+plot_attention(image_path, result, attention_plot)
+Image.open(image_path)
