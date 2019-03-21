@@ -314,3 +314,89 @@ class RNN_Decoder(tf.keras.Model):
 
     def reset_state(self, batch_size):
         return tf.zeros(batch_size, self.units)
+
+encoder = CNN_Encoder(embedding_dim)
+decoder = RNN_Decoder(embedding_dim,units,vocab_size)
+
+optimizer = tf.keras.optimizer.Adam()
+loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
+
+def loss_function(real,pred):
+    mask = tf.math.logical_not(tf.math.equal(real,0))
+    loss_ = loss_object(real,pred)
+    mask = tf.cast(mask,dtype=loss_.dtype)
+    loss_ *= mask
+
+    return tf.reduce_mean(loss_)
+
+#Checkpoint
+checkpoint_path = "./checkpoints/train"
+ckpt = tf.train.Checkpoint(
+    encoder=encoder,
+    decoder = decoder,
+    optimizer = optimizer
+)
+ckpt_manager = tf.train.CheckpointManager(ckpt,checkpoint_path,max_to_keep=5)
+
+start_epoch = 0
+if ckpt_manager.latest_checkpoint:
+    start_epoch = int(ckpt_manager.latest_checkpoint.split('-')[-1])
+
+#训练
+'''
+1:我们提取各自.npy文件中存储的特性，然后通过编码器传递这些特性。
+2:将编码器输出、隐藏状态(初始化为0)和解码器输入(即开始令牌)传递给解码器。
+3:解码器返回预测和解码器隐藏状态。
+4:然后将解码器的隐藏状态传递回模型，利用预测结果计算损耗。
+5:使用教师强制决定下一个输入到解码器
+6:教师强迫是将目标单词作为下一个输入传递给解码器的技术。
+7:最后一步是计算梯度，并将其应用于优化器和反向传播。
+'''
+
+#将其添加到单独的单元格中，因为如果运行训练单元格很多时候，会重置loss_plot数组
+loss_plot = []
+def train_step(img_tensor,target):
+    loss = 0
+
+    hidden = decoder.reset_state(batch_size=target.shape[0])
+    dec_input = tf.expand_dims([tokenizer.word_index['<start>']] * BATCH_SIZE)
+
+    with tf.GradientTape() as tape:
+        features = encoder(img_tensor)
+        #初始化每个批处理的隐藏状态因为标题之间没有关联
+        for i in range(1,target.shape[1]):
+            #通过解码器传递特性
+            predictions,hidden,_ = decoder(dec_input,features,hidden)
+
+            loss += loss_function(target[:,i],predictions)
+            #使用老师强迫v
+            dec_input = tf.expand_dims(target[:,i],1)
+    
+    total_loss = (loss/ int(target.shape[1]))
+
+    trainable_variables = encoder.trainable_variables + decoder.trainable_variables
+
+    gradients = tape.gradient(loss,trainable_variables)
+
+    optimizer.apply_gradients(zip(gradients,trainable_variables))
+
+    return loss,total_loss
+
+    EPOCHES = 20
+    for epoch in range(start_epoch,EPOCHES):
+        start = time.time()
+        total_loss = 0
+        for (batch,(img_tensor,target)) in enumerate(dataset):
+            batch_loss,t_loss = train_step(img_tensor,target)
+            total_loss += t_loss
+
+            if batch % 100 == 0:
+                print ('Epoch {} Batch {} Loss {:.4f}'.format(
+              epoch + 1, batch, batch_loss.numpy() / int(target.shape[1])))
+    #存储epoch结束损失值，以便稍后绘图
+    loss_plot.append(total_loss / num_steps)
+    if epoch %5 == 0:
+        ckpt_manager.save()
+    print ('Epoch {} Loss {:.6f}'.format(epoch + 1, 
+                                         total_loss/num_steps))
+    print ('Time taken for 1 epoch {} sec\n'.format(time.time() - start))
