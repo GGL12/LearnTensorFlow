@@ -224,3 +224,93 @@ dataset = dataset.map(lambda iterm1, iterm2: tf.numpy_function(
 
 dataset = dataset.shuffle(BUFFER_SIZE).batch(BATCH_SIZE)
 dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
+
+# 模型
+'''
+有趣的是，下面的解码器与神经机器翻译示例中的解码器是相同的。
+    1:在本例中，我们从InceptionV3的下卷积层提取特征，得到一个形状向量(8,8,2048)。
+    2:我们把它压缩成(64,2048)的形状。
+    3:然后这个向量通过CNN编码器(它由一个完全连接的层组成)传递。
+    4:RNN(这里的GRU)负责预测下一个单词。
+'''
+
+
+class BahdanauAttention(tf.keras.Model):
+    def __init__(self, units):
+        super(BahdanauAttention, self).__init__()
+        self.W1 = tf.keras.layers.Dense(units)
+        self.W2 = tf.keras.layers.Dense(units)
+        self.V = tf.keras.layers.Dense(1)
+
+    def call(self, features, hidden):
+        '''
+        feature (CNN_encoder output) shape == (batch_size, 64, embedding_dim)
+        hidden shape == (batch_size, hidden_size)
+        hidden_with_time_axis shape == (batch_size, 1, hidden_size)
+        '''
+        hidden_with_time_axis = tf.expand_dims(hidden, 1)
+
+        # score shape == (batch_size, 64, hidden_size)
+        score = tf.nn.tanh(self.W1(features) + self.W2(hidden_with_time_axis))
+        # attention_weights shape == (batch_size, 64, 1)
+        # 最后一个轴是1因为我们要给self.V赋值
+        attention_weights = tf.nn.softmax(self.V(score), axis=1)
+        # context_vector shape after sum == (batch_size, hidden_size)
+        context_vector = attention_weights * features
+        context_vector = tf.reduce_sum(context_vector, axis=1)
+
+        return context_vector, attention_weights
+
+
+class CNN_Encoder(tf.keras.Model):
+    '''
+    因为我们已经提取了这些特性，并使用pickle将其丢弃
+    这个编码器通过一个完全连接的层来传递这些特性
+    '''
+
+    def __init__(self, embedding_dim):
+        super(CNN_Encoder, self).__init__()
+        # shape after fc == (batch_size, 64, embedding_dim)
+        self.fc = tf.keras.layers.Dense(embedding_dim)
+
+    def call(self, x):
+        x = self.fc(x)
+        x = tf.nn.relu(x)
+        return x
+
+
+class RNN_Decoder(tf.keras.Model):
+    def __init__(self, embedding_dim, units, vocab_size):
+        super(RNN_Decoder).__init__()
+
+        self.units = units
+        self.embedding = tf.keras.layers.Embedding_dim(
+            vocab_size, embedding_dim)
+        self.gru = tf.keras.layers.GRU(
+            self.units,
+            return_sequences=True,
+            return_state=True,
+            recurrent_initializer='glorot_uniform'
+        )
+        self.fc1 = tf.keras.layers.Dense(self.units)
+        self.fc2 = tf.keras.layers.Dense(vocab_size)
+        self.attention = BahdanauAttention(self.units)
+
+    def call(self, x, features, hidden):
+        # 将注意力定义为一个单独的模型
+        context_vector, attention_weights = self.attention(features, hidden)
+        #通过嵌入后的x形状== (batch_size, 1, embedding_dim)
+        x = self.embedding(x)
+        #连接后的x形状== (batch_size, 1, embedding_dim + hidden_size)
+        x = tf.concat([tf.expand_dims(context_vector, 1), x], axis=1)
+        #shape == (batch_size, max_length, hidden_size)
+        output, state = self.gru(x)
+
+        x = self.fc1(output)
+        # x shape == (batch_size * max_length, hidden_size)
+        x = self.fc2(x)
+        # output shape == (batch_size * max_length, vocab)
+        return x, state, attention_weights
+
+    def reset_state(self, batch_size):
+        return tf.zeros(batch_size, self.units)
