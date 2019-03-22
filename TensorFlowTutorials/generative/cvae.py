@@ -178,3 +178,89 @@ def compute_gradients(model, x):
 
 def apply_gradients(optimizer, gradients, variables):
     optimizer.apply_gradients(zip(gradients, variables))
+
+#训练
+'''
+1:我们首先遍历数据集
+2:在每次迭代过程中，我们将图像传递给编码器，得到近似后验q(z|x)的一组均值和对数方差参数
+3:然后我们将重新参数化技巧应用到q(z|x)的样本中
+4:最后，我们将重新参数化的样本传递给解码器，得到生成分布p(x|z)的对数
+5:注意:由于我们使用keras加载的数据集，其中训练集中有60k个数据点，测试集中有10k个数据点，
+因此我们在测试集中得到的ELBO略高于使用Larochelle's MNIST动态二值化的文献中报告的结果。
+
+    生成图像:
+1:经过训练，是时候生成一些图像了
+2:我们首先从单位高斯先验分布p(z)中采样一组潜在向量
+3:然后，生成器将潜在样本z转换为观测值的对数，给出一个分布p(x|z)
+4:这里我们画出伯努利分布的概率
+'''
+epochs = 100
+latent_dim = 50
+num_examples_to_generate = 16
+
+#保持随机向量为常数进行生成(预测)会更容易看到改善。
+random_vector_for_generation = tf.random.normal(
+    shape=[num_examples_to_generate,latent_dim]
+)
+model = CVAE(latent_dim)
+
+def generate_and_save_images(model,epoch,test_input):
+    predictions = model.sample(test_input)
+    fig = plt.figure(figsize=(4,4))
+
+    for i in range(predictions.shape[0]):
+        plt.subplot(4,4,i+1)
+        plt.imshow(predictions[i,:,:,0],cmap='gray')
+        plt.axis('off')
+
+    plt.savefig('image_at_epoch_{:04d}.png'.format(epoch))
+    plt.show()
+
+generate_and_save_images(model,0,random_vector_for_generation)
+for epoch in range(1,epochs):
+    start_time = time.time()
+    for train_x in train_dataset:
+        gradients,loss = compute_gradients(model,train_x)
+        apply_gradients(optimizer,gradients,model.trainable_variables)
+    end_time = time.time()
+
+    if epoch % 1 == 0:
+        loss = tf.keras.metrics.Mean()
+        for test_x in test_dataset:
+            loss(compute_loss,test_x)
+        elbo = - loss.result()
+        display.cast_unicode(wait=False)
+        print('Epoch: {}, Test set ELBO: {}, '
+          'time elapse for current epoch {}'.format(epoch,
+                                                    elbo,
+                                                    end_time - start_time))
+
+        generate_and_save_images(
+            model,epoch,random_vector_for_generation
+        )
+#使用epoch号显示图像
+def display_image(epoch_no):
+    return PIL.Image.open('image_at_epoch_{:04d}.png'.format(epoch_no))
+
+plt.imshow(display_image(epochs))
+plt.axis('off')
+
+#生成所有保存图像的GIF。
+with imageio.get_writer('cvae.gif',mode='I') as writer:
+    filenames = glob.glob('image*.png')
+    filenames = sorted(filenames)
+    last = 1
+    for i ,filename in enumerate(filenames):
+        frame = 2*(i**0.5)
+        if round(frame) > round(last):
+            last = frame
+        else:
+            continue
+        image = imageio.imread(filename)
+        writer.append_data(image)
+    image = imageio.imread(filename)
+    writer.append_data(image)
+    #这是一个在记事本中显示gif的技巧
+    os.system('cp cvae.gif cvae.gif.png')
+
+display.Image(filename='cvae.git.png')
