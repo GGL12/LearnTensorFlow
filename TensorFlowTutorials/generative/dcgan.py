@@ -75,3 +75,66 @@ def make_generator_model():
     assert model.output_shape == (None, 28, 28, 1)
 
     return model
+
+#使用(尚未经过训练的)生成器创建图像。
+generator = make_generator_model()
+
+noise = tf.random.normal([1,100])
+generated_image = generator(noise,training=False)
+
+plt.imshow(generated_image[0,:,:,0],cmap='gray')
+
+#鉴别器是一种基于cnn的图像分类器。
+def make_discriminator_model():
+    model = tf.python.keras.Sequential()
+    model.add(layers.Conv2D(64,(5,5),strides=(1,1),padding='same',input_shape=[28,28,1]))
+    model.add(layers.LeakyReLU())
+    model.add(layers.Dropout())
+    model.add(layers.Flatten())
+    model.add(layers.Dense())
+
+    return model
+
+#使用(尚未经过训练的)鉴别器将生成的图像分为真图像和假图像。该模型将被训练为对真实图像输出正值，对假图像输出负值。
+discriminator = make_discriminator_model()
+decision = discriminator(generated_image)
+print(decision)
+
+#定义损失和优化器
+'''
+为这两个模型定义损失函数和优化器。
+'''
+#这个方法返回一个辅助函数来计算交叉熵损失
+cross_entropy = tf.python.keras.losses.BinaryCrossentropy(from_logits=True)
+
+#鉴频器的损失
+'''
+该方法量化了鉴别器对真伪图像的识别能力。它将disciminator对真实图像的预测与1数组进行比较，
+将disciminator对伪造(生成)图像的预测与0数组进行比较。
+'''
+def discriminator_loss(real_output,fake_output):
+    real_loss = cross_entropy(tf.ones_like(real_output),real_output)
+    fake_loss = cross_entropy(tf.zeros_like(fake_loss),fake_loss)
+    total_loss = real_loss + fake_loss
+    return total_loss
+
+#generator的损耗量化了它欺骗鉴别器的能力。直观地说，如果生成器运行良好，鉴别器将把假图像分类为真实的(或1)。
+def generator_loss(fake_output):
+    return cross_entropy(tf.ones_like(fake_output),fake_output)
+
+#由于我们将分别训练两个网络，因此鉴别器和生成器优化器是不同的。
+generator_optimizer = tf.python.keras.optimizers.Adam(1e-4)
+discriminator_optimizer = tf.python.keras.optimizers.Adam(1e-4)
+
+#保存检查点
+'''
+本笔记本还演示了如何保存和恢复模型，这在长时间运行的训练任务被中断时是很有帮助的。
+'''
+checkpoint_dir = './training_checkpoints'
+checkpoint_prefix = os.path.join(checkpoint_dir, "ckpt")
+checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
+                                 discriminator_optimizer=discriminator_optimizer,
+                                 generator=generator,
+                                 discriminator=discriminator)
+#定义训练循环
+
