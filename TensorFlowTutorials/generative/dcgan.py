@@ -137,4 +137,35 @@ checkpoint = tf.train.Checkpoint(generator_optimizer=generator_optimizer,
                                  generator=generator,
                                  discriminator=discriminator)
 #定义训练循环
+EPOCHS = 50
+noise_dim = 100
+num_examples_to_genetatr = 16
+##我们将在以后重用这个种子(这样会更容易)
+#在动画GIF中可视化进度)
+seed = tf.random.normal([num_examples_to_genetatr,noise_dim])
+
+'''
+训练循环从生成器接收随机种子作为输入开始。种子是用来产生图像的。然后使用鉴别器对真实
+图像(来自训练集)和伪造图像(由生成器生成)进行分类。计算了每一种模型的损耗，并利用梯度对
+产生器和鉴别器进行了更新。
+'''
+
+#注意“tf.function”的用法
+#这个注释导致函数被“编译”。
+def train_step(images):
+    noise = tf.random.normal([BATCH_SIZE,noise_dim])
+
+    with tf.GradientTape() as gen_tape,tf.GradientTape() as dics_tape:
+        generated_images = generator(noise,training=True)
+
+        real_output = discriminator(images,training=True)
+        fake_output = discriminator(generated_image,training=True)
+
+        gen_loss = generator_loss(fake_output)
+        disc_loss = discriminator_loss(real_output,fake_output)
+    
+    gradients_of_generator = gen_tape.gradient(gen_loss,discriminator.trainable_variables)
+    gradients_of_discriminator = dics_tape.gradient(disc_loss,discriminator.trainable_variables)
+    generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
+    discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
