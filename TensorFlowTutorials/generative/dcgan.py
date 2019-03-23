@@ -169,3 +169,40 @@ def train_step(images):
     generator_optimizer.apply_gradients(zip(gradients_of_generator, generator.trainable_variables))
     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, discriminator.trainable_variables))
 
+def train(dataset,epochs):
+    for epoch in epochs:
+        start = time.time
+
+        for image_batch in dataset:
+            train_step(image_batch)
+        #为GIF生成图像
+        display.clear_output(wait=True)
+        generate_and_save_images(
+            generator,
+            epoch + 1,
+            seed
+        )
+        if (epoch + 1) % 15 == 0:
+            checkpoint.save(file_prefix = checkpoint_prefix)
+    
+        print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start)) 
+
+    display.clear_output(wait=True)
+    generate_and_save_images(generator,
+                           epochs,
+                           seed)
+
+#生成和保存图像
+def generate_and_save_images(model,epoch,test_input):
+    #意“training”被设置为False。所以所有层都在推理模式(batchnorm)下运行。
+    predictions = model(test_input,training=False)
+
+    fig = plt.figure(figsize=(4,4))
+
+    for i in range(predictions.shape[0]):
+        plt.subplot(4,4,i+1)
+        plt.imshow(predictions[i,:,:,0] * 127.5 + 127.5,cmap='gray')
+        plt.axis('off')
+    plt.savefig('iamge_at_epoch_{:04d}.png'.format(epoch))
+    plt.show()
+
