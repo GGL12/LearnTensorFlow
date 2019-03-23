@@ -206,3 +206,43 @@ def generate_and_save_images(model,epoch,test_input):
     plt.savefig('iamge_at_epoch_{:04d}.png'.format(epoch))
     plt.show()
 
+#训练模型
+'''
+    调用上面定义的train()方法来同时训练生成器和鉴别器。注意，甘斯的训练是很棘手的。重要的是，
+生成器和鉴别器不能互相压倒对方(例如，它们的训练速度相似)。
+在训练开始时，生成的图像看起来像随机噪声。随着训练的进展，生成的数字将越来越真实。
+在大约50个时代之后，它们就像MNIST数字了。使用Colab上的默认设置，这可能需要大约一分钟/历元。
+'''
+
+train(train_dataset,EPOCHS)
+
+#恢复最新的检查点。
+checkpoint.restore(tf.train.latest_checkpoint(checkpoint_dir))
+
+#创建一个GIF
+'''
+使用epoch号显示单个图像
+'''
+
+def display_image(epoch_no):
+    return PIL.Image.open("image_at_epoch_{:04d}.png".format(epoch_no))
+
+display_image(EPOCHS)
+
+#使用imageio创建一个动画gif使用在培训期间保存的图像。
+with imageio.get_writer('dcgan.gif',mode="I") as writer:
+    filenames = glob.glob('image*.png')
+    filenames = sorted(filenames)
+
+    last = -1
+    for i,filename in enumerate(filenames):
+        frame = 2*(i**0.5)
+        if round(frame) > round(last):
+            last = frame
+        else:
+            continue
+        image = imageio.imread(filename)
+        writer.append_data(image)
+    os.rename('dcgan.gif','dcgan.gif.png')
+
+display.Image(filename="dcgan.gif.png")
