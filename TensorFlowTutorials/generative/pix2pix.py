@@ -84,3 +84,122 @@ def normalize(input_image, real_image):
     input_image = (input_image / 127.5) - 1
     real_image = (real_image / 127.5) - 1
     return input_image, real_image
+
+
+def random_jitter(input_image, real_image):
+    # resize 286 * 286 * 3
+    input_image, real_image = resize(input_image, real_image, 286, 286)
+
+    # resize 256*256*3
+    input_image, real_image = resize(input_image, real_image, 256, 256)
+
+    if tf.random.uniform(()) > 0.5:
+        # 随机的镜像
+        input_image = tf.image.flip_left_right(input_image)
+        real_image = tf.image.flip_left_right(real_image)
+
+    return input_image, real_image
+
+
+'''
+如下面的图片所示
+他们正在经历随机的紧张
+#随机抖动在论文中描述的是
+# 1。将图像的大小调整为更大的高度和宽度
+# 2。随机裁剪到原始大小
+# 3。随机水平翻转图像
+'''
+plt.figure(figsize=(6, 6))
+for i in range(4):
+    rj_inp, rj_re = random_jitter(inp, re)
+    plt.subplot(2, 2, i+1)
+    plt.imshow(rj_inp/255.0)
+    plt.axis('off')
+plt.show()
+
+
+def load_image_train(image_file):
+    input_image, real_image = load(image_file)
+    input_image, real_image = random_jitter(input_image, real_image)
+    input_image, real_image = normalize(input_image, real_image)
+
+    return input_image, real_image
+
+
+def load_image_test(image_file):
+    input_image, real_image = load(image_file)
+    input_image, real_image = resize(
+        input_image, real_image, IMG_HEIGHT, IMG_WIDTH)
+    input_image, real_image = normalize(input_image, real_image)
+
+    return input_image, real_image
+
+
+# 输入管道
+train_dataset = tf.data.Dataset.list_files(PATH + 'train/*.jpg')
+train_dataset = train_dataset.shuffle(BUFFER_SIZE)
+train_dataset = train_dataset.map(
+    load_image_train,
+    num_parallel_calls=tf.data.experimental.AUTOTRUE
+)
+train_dataset = train_dataset.batch(1)
+
+test_dataset = tf.data.Dataset.list_files(PATH + 'test/.jpg')
+# 改组，以便为每个epoch生成一个不同的图像预测和显示模型的进度。
+test_dataset = test_dataset.shuffle(BUFFER_SIZE)
+test_dataset = test_dataset.map(load_image_test)
+test_dataset = train_dataset.batch(1)
+
+# 构建生成器
+'''
+1:generator的结构是一个改进的U-Net
+2:编码器中的每个块为(Conv -> Batchnorm -> Leaky ReLU)
+3:解码器中的每个块是(转置Conv -> Batchnorm -> Dropout(应用于前3块)-> ReLU)
+4:编码器和解码器之间有跳过连接(如在U-Net中)。
+'''
+OUTPUT_CHANNELS = 3
+
+
+def downsample(filters, size, apply_batchnorm=True):
+    initializer = tf.random_normal_initializer(0., 0.02)
+    result = tf.python.keras.Sequential()
+    result.add(
+        tf.python.keras.layers.Conv2D(
+            filters, size, strides=2, padding='same',
+            kernel_initializer=initializer,
+            use_bias=False
+        )
+    )
+    if apply_batchnorm:
+        result.add(tf.python.keras.layers.BatchNormalization())
+    result.add(tf.python.keras.layers.LeakyReLU())
+
+    return result
+
+
+down_model = downsample(3, 4)
+down_result = down_model(tf.expand_dims(inp, 0))
+print(down_result.shape)
+
+
+def upsample(filters, size, apply_dropout=False):
+    initializer = tf.random_normal_initializer(0., 0.02)
+    result = tf.python.keras.Sequential()
+    result.add(
+        tf.python.keras.layers.Conv2DTranspose(
+            filters,
+            size, strides=2,
+            padding='same',
+            kernel_initializer=initializer,
+            use_bias=False
+        )
+    )
+    if apply_dropout:
+        result.add(tf.python.keras.layers.Dropout(0.5))
+    result.add(tf.python.keras.layers.ReLU())
+
+    return result
+
+up_model = upsample(3,4)
+up_result = up_model(down_result)
+print(up_result.shape)
