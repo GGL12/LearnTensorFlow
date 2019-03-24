@@ -200,6 +200,120 @@ def upsample(filters, size, apply_dropout=False):
 
     return result
 
-up_model = upsample(3,4)
+
+up_model = upsample(3, 4)
 up_result = up_model(down_result)
 print(up_result.shape)
+
+
+def Generator():
+    down_stack = [
+        downsample(64, 4, apply_batchnorm=False),  # (bs, 128, 128, 64)
+        downsample(128, 4),  # (bs, 64, 64, 128)
+        downsample(256, 4),  # (bs, 32, 32, 256)
+        downsample(512, 4),  # (bs, 16, 16, 512)
+        downsample(512, 4),  # (bs, 8, 8, 512)
+        downsample(512, 4),  # (bs, 4, 8, 512)
+        downsample(512, 4),  # (bs, 2, 8, 512)
+        downsample(512, 4),  # (bs, 1, 8, 512)
+    ]
+    up_stack = [
+        upsample(512, 4, apply_dropout=True),  # (bs, 2, 2, 1024)
+        upsample(512, 4, apply_dropout=True),  # (bs, 4, 4, 1024)
+        upsample(512, 4, apply_dropout=True),  # (bs, 8, 8, 1024)
+        upsample(512, 4),  # (bs, 16, 16, 1024)
+        upsample(256, 4),  # (bs, 32, 32, 512)
+        upsample(128, 4),  # (bs, 64, 64, 256)
+        upsample(64, 4),  # (bs, 128, 128, 128)
+    ]
+    initializer = tf.random_normal_initializer(0., 0.02)
+    last = tf.python.keras.layers.Conv2DTranspose(
+        OUTPUT_CHANNELS,
+        4,
+        strides=2,
+        padding='same',
+        kernel_initializer=initializer,
+        activation='tanh'
+    )  # (bs, 256, 256, 3)
+    concat = tf.python.keras.layers.Concatenate()
+
+    inputs = tf.python.keras.layers.Input(shape=[None, None, 3])
+
+    x = inputs
+
+    # 通过模型向下采样
+    skips = []
+    for down in down_stack:
+        x = down(x)
+        skips.append(x)
+    skips = reversed(skips[:-1])
+
+    # 向上采样并建立跳过连接
+    for up, skip in zip(up_stack, skips):
+        x = up(x)
+        x = concat([x, skip])
+
+    x = last(x)
+
+    return tf.python.keras.Model(inputs=inputs, output=x)
+
+
+generator = Generator()
+gen_output = generator(inp[tf.newaxis, ...], training=False)
+plt.imshow(gen_output[0, ...])
+
+# 构建鉴别器
+'''
+1:鉴别器是一个PatchGAN。
+2:鉴别器中的每个块为(Conv -> BatchNorm -> Leaky ReLU)
+3:最后一层之后输出的形状为(batch_size, 30, 30, 1)
+4:输出的每个30x30补丁对输入图像的70x70部分进行分类(这样的架构称为PatchGAN)。
+5:鉴别器接收2个输入。
+    5.1:输入图像和目标图像，将其分类为实图像。
+    5.2:输入图像和生成的图像(生成器的输出)，应分类为伪图像。
+    5.3:我们在代码中将这两个输入连接在一起(tf.concat([inp, tar], axis=-1))
+'''
+
+
+def Discriminator():
+    initializer = tf.random_normal_initializer(0, 0.02)
+
+    inp = tf.python.keras.layers.Input(
+        shape=[None, None, 3], name='input_image')
+    tar = tf.python.keras.layers.Input(
+        shape=[None, None, 3], name='target_image')
+
+    x = tf.python.keras.layers.concatenate(
+        [inp, tar])(bs, 256, 256, channels*2)
+
+    down1 = downsample(64, 4, False)(x)  # (bs, 128, 128, 64)
+    down2 = downsample(128, 4)(down1)  # (bs, 64, 64, 128)
+    down3 = downsample(256, 4)(down2)  # (bs, 32, 32, 256)
+
+    zero_padl = tf.python.keras.layers.ZeroPadding2D()(down3)  # (bs, 34, 34, 256)
+    conv = tf.python.keras.layers.Conv2D(
+        512,
+        4,
+        strides=1,
+        kernel_initializer=initializer,
+        use_bias=False
+    )(zero_padl)  # (bs, 31, 31, 512)
+
+    batchnorml = tf.python.keras.layers.BatchNormalization()(conv)
+
+    leake_rule = tf.python.keras.layers.LeakyReLU()(batchnorml)
+
+    zero_pad2 = tf.python.keras.layers.ZeroPadding2D()(batchnorml)
+
+    last = tf.python.keras.layers.Conv2D(
+        1,
+        4, strides=1,
+        kernel_initializer=initializer,
+    )(zero_pad2)  # (bs, 30, 30, 1)
+    return tf.python.keras.Model(inputs=[inp, tar], outputs=last)
+
+
+discriminator = Discriminator()
+disc_out = discriminator([inp[tf.newaxis, ...], gen_output], training=False)
+plt.imshow(disc_out[0, ..., -1], vmin=20, vmax=20, cmap='RdBu_r')
+plt.colorbar()
