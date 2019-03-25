@@ -317,3 +317,94 @@ discriminator = Discriminator()
 disc_out = discriminator([inp[tf.newaxis, ...], gen_output], training=False)
 plt.imshow(disc_out[0, ..., -1], vmin=20, vmax=20, cmap='RdBu_r')
 plt.colorbar()
+
+# 定义损失函数和优化器
+'''
+鉴别器的损失:
+    1:鉴别器损失函数有2个输入;真实的图像，生成的图像
+    2:real_loss是真实图像和一组图像的sigmoid交叉熵损失(因为这些是真实图像)
+    3:generated_loss是生成的图像和一组0的sigmoid交叉熵损失(因为这些是假图像)
+    4:那么total_loss是real_loss和generated_loss的和
+生成器损失:
+    1:它是生成的图像和一组图像的s形交叉熵损失。
+    2:文中还包括L1损失，即生成的图像与目标图像之间的平均绝对误差。
+    3:这允许生成的图像在结构上与目标图像相似。
+    4:计算生成器总损耗= gan_loss + * l1_loss的公式，其中= 100。这个值是由本文作者决定的。
+'''
+LAMBDA = 100
+loss_object = tf.python.keras.losses.BinaryCrossentropy(from_logits=True)
+
+
+def discriminator_loss(disc_real_output, disc_generator_output):
+    real_loss = loss_object(tf.ones_like(disc_real_output), disc_real_output)
+
+    generator_loss = loss_object(tf.zeros_like(
+        disc_generator_output), disc_generator_output)
+
+    total_disc_loss = real_loss + generator_loss
+
+    return total_disc_loss
+
+
+def generator_loss(disc_generator_output, gen_output, target):
+    gan_loss = loss_object(tf.ones_like(
+        disc_generator_output), disc_generator_output)
+
+    # 平均绝对误差
+    l1_loss = tf.reduce_mean(tf.abs(target - gen_output))
+
+    tatal_gan_loss = gan_loss + (LAMBDA * l1_loss)
+
+    return tatal_gan_loss
+
+
+generator_optimizer = tf.python.keras.optimizers.Adam(2e-4, beta_1=0.5)
+discriminator_optimizer = tf.python.keras.optimizers.Adam(2e-4, beta_1=0.5)
+
+# 检查点(基于对象的储存)
+checkppint_dir = './training_checkpoints'
+checkppint_prefix = os.path.join(checkppint_dir, 'ckpt')
+checkpoint = tf.train.Checkpoint(
+    generator_optimizer=generator_optimizer,
+    discriminator_optimizer=discriminator_optimizer,
+    generator=generator,
+    discriminator=discriminator
+)
+
+# 训练
+'''
+1:我们首先遍历数据集
+2:生成器获取输入图像，然后我们得到生成的输出。
+3:鉴别器接收input_image和生成的图像作为第一个输入。第二个输入是input_image和target_image。
+4:接下来，我们计算了生成器和鉴别器的损耗。
+5:然后，我们计算与生成器和鉴别器变量(输入)相关的损失梯度，并将这些梯度应用于优化器。
+
+生成图像:
+    1:经过训练，是时候生成一些图像了!
+    2:我们将图像从测试数据集传递到生成器。
+    3:然后生成器将把输入图像转换成我们期望的输出。
+    4:最后一步是绘制预测图，瞧!
+'''
+EPOCHS = 200
+
+
+def generate_images(model, test_input, tar):
+    '''
+    这里的训练=True是故意的
+    我们希望在运行模型时获得批处理统计数据测试数据集上的#。如果我们使用training=False，
+    我们将得到从训练数据集中获得的累计统计信息(我们不想要)
+    '''
+    prediction = model(test_input, training=True)
+    plt.figure(figsize=(15, 15))
+
+    display_list = [test_input[0], tar[0], prediction[0]]
+
+    title = ['Input Image', 'Ground Truth', 'Predicted Image']
+
+    for i in range(3):
+        plt.subplot(1, 3, i+1)
+        plt.title(title[i])
+        # 获取[0,1]之间的像素值来绘制它。
+        plt.imshow(display_list[i] * 0.5 + 0.5)
+        plt.axis('off')
+    plt.show()
