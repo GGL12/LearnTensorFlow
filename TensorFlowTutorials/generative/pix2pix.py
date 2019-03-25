@@ -408,3 +408,61 @@ def generate_images(model, test_input, tar):
         plt.imshow(display_list[i] * 0.5 + 0.5)
         plt.axis('off')
     plt.show()
+
+
+def train_step(input_image, target):
+    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        gen_output = generator(input_image, training=True)
+
+        disc_real_output = discriminator([input_image, target], training=True)
+        disc_generated_output = discriminator(
+            [input_image, gen_output], training=True)
+
+        gen_loss = generator_loss(disc_generated_output, gen_output, target)
+        disc_loss = discriminator_loss(disc_real_output, disc_generated_output)
+
+    generator_gradients = gen_tape.gradient(
+        disc_loss,
+        discriminator.trainable_variables
+    )
+    discriminator_gradients = disc_tape.gradient(
+        disc_loss,
+        discriminator.trainable_variables
+    )
+
+    generator_optimizer.apply_gradients(
+        zip(generator_gradients, generator.trainable_variables))
+
+    discriminator_optimizer.apply_gradients(zip(
+        discriminator_gradients,
+        discriminator.trainable_variables
+    ))
+
+
+def train(dataset, epochs):
+    for epoch in epochs:
+        start = time.time()
+
+        for input_image, target in dataset:
+            train_step(input_image, target)
+        clear_output(wait=True)
+
+        for inp, tar in test_dataset.take(1):
+            generate_images(generator, target)
+
+        # 每隔二十个epoch保存训练模型
+        if (epoch + 1) % 20 == 0:
+            checkpoint.save(file_prefix=checkppint_prefix)
+
+        print('Time taken for epoch {} is {} sec\n'.format(epoch + 1,
+                                                           time.time()-start))
+
+
+train(train_dataset, EPOCHS)
+
+# 恢复最新的检查点和测试
+checkpoint.restore(tf.train.latest_checkpoint(checkppint_dir))
+
+# 对整个测试数据集进行测试
+for inp, tar in test_dataset:
+    generate_images(generator, inp, tar)
